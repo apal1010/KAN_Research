@@ -65,6 +65,8 @@ def benchmark(
         reps: int,
         model_name: str
     ) -> Dict[str, float]:
+    
+    
     forward_times = []
     backward_times = []
     forward_mems = []
@@ -91,7 +93,8 @@ def benchmark(
                 t3 = time.time()
                 backward_times.append((t3 - t2) * 1000)
             else:
-                with profile(activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True) as prof:
+                with profile(activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True,
+                             on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./log/{model_name}')) as prof:
                     with record_function("model_inference"):
                         model(tensor_input)
                 details = prof.key_averages(group_by_input_shape=True).table(sort_by="cpu_time_total", row_limit=10)
@@ -99,35 +102,42 @@ def benchmark(
                     print(details, file=f)
                 
         elif device == 'cuda':
-            torch.cuda.reset_peak_memory_stats()
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
+            if (k > 0):
+                torch.cuda.reset_peak_memory_stats()
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
 
-            start.record()
-            pred = model(tensor_input)
-            end.record()
+                start.record()
+                pred = model(tensor_input)
+                end.record()
 
-            torch.cuda.synchronize()
-            if k > 0:
+                torch.cuda.synchronize()
+                
                 forward_times.append(start.elapsed_time(end))
                 forward_mems.append(torch.cuda.max_memory_allocated())
 
-            train_loss = loss_fn(pred, tensor_output)
+                train_loss = loss_fn(pred, tensor_output)
 
-            torch.cuda.reset_peak_memory_stats()
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
+                torch.cuda.reset_peak_memory_stats()
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
 
-            start.record()
-            train_loss.backward()
-            end.record()
+                start.record()
+                train_loss.backward()
+                end.record()
 
-            torch.cuda.synchronize()
-            if k > 0:
+                torch.cuda.synchronize()
                 backward_times.append(start.elapsed_time(end))
                 backward_mems.append(torch.cuda.max_memory_allocated())
-            if (k == 0):
-                pass
+                    
+            else:
+                with profile(activities=[ProfilerActivity.CUDA], profile_memory=True, record_shapes=True,
+                             on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./log/{model_name}')) as prof:
+                    with record_function("model_inference"):
+                        model(tensor_input)
+                details = prof.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=10)
+                with open(f'results/{model_name}_profiler.txt', 'w') as f:
+                    print(details, file=f)
     return {
         'forward': np.mean(forward_times),
         'backward': np.mean(backward_times),
@@ -135,6 +145,7 @@ def benchmark(
         'backward-memory': np.mean(backward_mems) / (1024 ** 3),
         'macs': macs if macs is not None else 0
     }
+    # return None
 
 
 def save_results(t: Dict[str, Dict[str, float]], out_path: str):
@@ -193,40 +204,26 @@ def main():
     loss_fn = lambda x, y: torch.mean((x - y) ** 2)
     
     res = {}
-    if args.method == 'fourierkan' or args.method == 'all':
-        model = FourierKAN(layers=[args.inp_size, args.hid_size, 1], gridsize=5, device='cpu')
-        if not args.just_cuda:
-            res['fourierkan-cpu'] = benchmark(dataset, 'cpu', args.batch_size, loss_fn, model, args.reps, 'fourierkan-cpu')
-            res['fourierkan-cpu']['params'], res['fourierkan-cpu']['train_params'] = count_params(model)
-        model.to('cuda')
-        res['fourierkan-gpu'] = benchmark(dataset, 'cuda', args.batch_size, loss_fn, model, args.reps, 'fourierkan-gpu')
-        res['fourierkan-gpu']['params'], res['fourierkan-gpu']['train_params'] = count_params(model)
-    if args.method == 'chebykan' or args.method == 'all':
-        model = ChebyKAN(layers=[args.inp_size, args.hid_size, 1], device='cpu')
-        if not args.just_cuda:
-            res['chebykan-cpu'] = benchmark(dataset, 'cpu', args.batch_size, loss_fn, model, args.reps, 'chebykan-cpu')
-            res['chebykan-cpu']['params'], res['chebykan-cpu']['train_params'] = count_params(model)
-        model.to('cuda')
-        res['chebykan-gpu'] = benchmark(dataset, 'cuda', args.batch_size, loss_fn, model, args.reps, 'chebykan-gpu')
-        res['chebykan-gpu']['params'], res['chebykan-gpu']['train_params'] = count_params(model)
-    if args.method == 'mlp' or args.method == 'all':
-        model = MLP(layers=[args.inp_size, args.hid_size * 10, 1], device='cpu')
-        if not args.just_cuda:
-            res['mlp-cpu'] = benchmark(dataset, 'cpu', args.batch_size, loss_fn, model, args.reps, 'mlp-cpu')
-            res['mlp-cpu']['params'], res['mlp-cpu']['train_params'] = count_params(model)
-        model.to('cuda')
-        res['mlp-gpu'] = benchmark(dataset, 'cuda', args.batch_size, loss_fn, model, args.reps, 'mlp-gpu')
-        res['mlp-gpu']['params'], res['mlp-gpu']['train_params'] = count_params(model)
-    if args.method == 'wav-kan' or args.method == 'all':
-        model = WavKAN(layers_hidden=[args.inp_size, 2 * args.hid_size + args.hid_size//2, 1])
-        model.to('cpu')
-        if not args.just_cuda:
-            res['wav-kan-cpu'] = benchmark(dataset, 'cpu', args.batch_size, loss_fn, model, args.reps, 'wav-kan-cpu')
-            res['wav-kan-cpu']['params'], res['wav-kan-cpu']['train_params'] = count_params(model)
-        model.to('cuda')
-        res['wav-kan-gpu'] = benchmark(dataset, 'cuda', args.batch_size, loss_fn, model, args.reps, 'wav-kan-gpu')
-        res['wav-kan-gpu']['params'], res['wav-kan-gpu']['train_params'] = count_params(model)
+    
+    kan_models = {
+        'fourierkan': FourierKAN(layers=[args.inp_size, args.hid_size, 1], gridsize=5, device='cpu'),
+        'chebykan': ChebyKAN(layers=[args.inp_size, args.hid_size, 1], device='cpu'),
+        'mlp': MLP(layers=[args.inp_size, args.hid_size * 10, 1], device='cpu'),
+        'wav-kan': WavKAN(layers_hidden=[args.inp_size, 2 * args.hid_size + args.hid_size//2, 1], wavelet_type='dog')
+    }
+
+    for model_name, model in kan_models.items():
+        if args.method == model_name or args.method == 'all':
+            for device in ['cpu', 'cuda']:
+                dev_name = 'gpu' if device == 'cuda' else 'cpu'
+                if device == 'cpu' and args.just_cuda:
+                    continue
+                model.to(device)
+                res_key = f'{model_name}-{dev_name}'
+                res[res_key] = benchmark(dataset, device, args.batch_size, loss_fn, model, args.reps, res_key)
+                res[res_key]['params'], res[res_key]['train_params'] = count_params(model)
     save_results(res, args.output_path)
+    
 
 if __name__=='__main__':
     main()

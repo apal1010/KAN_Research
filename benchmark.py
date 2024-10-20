@@ -275,7 +275,7 @@ def main():
         model.to('cuda')
         res['sine-kan-gpu'] = benchmark(dataset, 'cuda', args.batch_size, loss_fn, model, args.reps)
         res['sine-kan-gpu']['params'], res['sine-kan-gpu']['train_params'] = count_params(model)
-    if args.method == 'relu-kan' or args.method == 'all':
+    if args.method == 'relu-kan' or args.method == 'alls':
         model = ReLUKAN([args.inp_size, args.hid_size, 1], 5, 5)
         if not args.just_cuda:
             model.to('cpu')
