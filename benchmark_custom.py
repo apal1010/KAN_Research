@@ -6,55 +6,62 @@ import torch
 from torch import nn
 from torch.profiler import profile, record_function, ProfilerActivity
 from kan import create_dataset
-from kan import KAN as pyKAN
-from efficient_kan import KAN as effKAN
-from FourierKAN.fftKAN import NaiveFourierKANLayer
-from ChebyKAN.ChebyKANLayer import ChebyKANLayer
-from fastkan import FastKAN
-from faster_kan.fasterkan import FasterKAN
-from rbf_kan.RBF_KAN import RBFKAN
-from wav_kan.KAN import KAN as WavKAN
-from SineKAN.sine_kan import SineKAN
-from relu_kan.torch_relu_kan import ReLUKAN
+from experiment_kans.MLP import MLP
+from experiment_kans.fourier_kan import FourierKAN
+from experiment_kans.cheby_kan import ChebyKAN
+from experiment_kans.wav_kan import WavKAN
+from experiment_kans.rbf_kan import RBFKAN
 
+from deepspeed.profiling.flops_profiler import get_model_profile
+from deepspeed.accelerator import get_accelerator
 
-class MLP(nn.Module):
-    def __init__(self, layers: Tuple[int, int, int], device: str):
-        super().__init__()
-        self.layer1 = nn.Linear(layers[0], layers[1], device=device)
-        self.layer2 = nn.Linear(layers[1], layers[2], device=device)
+def explore(
+        KAN_type: str,
+        device: str,
+        layer_depths: Tuple[int] = [1],
+        hidden_size: Tuple[int] = [1000],
+    ):
+    kan_classes = {
+        'fourierkan': FourierKAN,
+        'chebykan': ChebyKAN,
+        'wav-kan': WavKAN,
+        'rbf-kan': RBFKAN,
+        'mlp': MLP
+    }
 
-    def forward(self, x: torch.Tensor):
-        x = self.layer1(x)
-        x = nn.functional.relu(x)
-        x = self.layer2(x)
-        x = nn.functional.sigmoid(x)
-        return x
+    if KAN_type not in kan_classes:
+        raise ValueError(f"Unknown KAN type: {KAN_type}")
+
+    results = {}
+    for depth in layer_depths:
+        for size in hidden_size:
+            layers = [size] * depth
+            model = kan_classes[KAN_type](layers_hidden=[2] + layers + [1], device=device)
+            model.to(device)
+
+            # Create dummy input and output
+            dummy_input = torch.randn(32, 2).to(device)
+            dummy_output = torch.randn(32, 1).to(device)
+            loss_fn = nn.MSELoss()
+
+            # Forward pass
+            start_time = time.time()
+            pred = model(dummy_input)
+            forward_time = (time.time() - start_time) * 1000
+
+            # Backward pass
+            start_time = time.time()
+            loss = loss_fn(pred, dummy_output)
+            loss.backward()
+            backward_time = (time.time() - start_time) * 1000
+
+            results[f'depth_{depth}_size_{size}'] = {
+                'forward_time': forward_time,
+                'backward_time': backward_time
+            }
+
+    return results
     
-
-class FourierKAN(nn.Module):
-    def __init__(self, layers: Tuple[int, int, int], gridsize: int, device: str):
-        super().__init__()
-        self.layer1 = NaiveFourierKANLayer(layers[0], layers[1], gridsize=gridsize).to(device)
-        self.layer2 = NaiveFourierKANLayer(layers[1], layers[2], gridsize=gridsize).to(device)
-
-    def forward(self, x: torch.Tensor):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        return x
-    
-
-class ChebyKAN(nn.Module):
-    def __init__(self, layers: Tuple[int, int, int], device: str):
-        super().__init__()
-        self.layer1 = ChebyKANLayer(layers[0], layers[1], degree=9).to(device)
-        self.layer2 = ChebyKANLayer(layers[1], layers[2], degree=9).to(device)
-
-    def forward(self, x: torch.Tensor):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        return x
-
 
 def benchmark(
         dataset: Dict[str, torch.Tensor],
@@ -65,7 +72,6 @@ def benchmark(
         reps: int,
         model_name: str
     ) -> Dict[str, float]:
-    
     
     forward_times = []
     backward_times = []
@@ -97,7 +103,7 @@ def benchmark(
                              on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./log/{model_name}')) as prof:
                     with record_function("model_inference"):
                         model(tensor_input)
-                details = prof.key_averages(group_by_input_shape=True).table(sort_by="cpu_time_total", row_limit=10)
+                details = prof.key_averages(group_by_input_shape=True).table(sort_by="cpu_time_total", row_limit=20)
                 with open(f'results/{model_name}_profiler.txt', 'w') as f:
                     print(details, file=f)
                 
@@ -135,9 +141,10 @@ def benchmark(
                              on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./log/{model_name}')) as prof:
                     with record_function("model_inference"):
                         model(tensor_input)
-                details = prof.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=10)
+                details = prof.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=20)
                 with open(f'results/{model_name}_profiler.txt', 'w') as f:
                     print(details, file=f)
+                    
     return {
         'forward': np.mean(forward_times),
         'backward': np.mean(backward_times),
@@ -153,8 +160,8 @@ def save_results(t: Dict[str, Dict[str, float]], out_path: str):
     with open(out_path, 'w') as f:
         print(f"{' '*maxlen}  |  {'forward':>11}  |  {'backward':>11}  |  {'forward':>11}  |  {'backward':>11}  |  {'num params':>11}  |  {'num trainable params':>20}  |  {'num macs':>20}", file=f)
         print(f"{' '*maxlen}  |  {'forward':>11}  |  {'backward':>11}  |  {'forward':>11}  |  {'backward':>11}  |  {'num params':>11}  |  {'num trainable params':>20}  |  {'num macs':>20}")
-        print('-'*130, file=f)
-        print('-'*130)
+        print('-'*160, file=f)
+        print('-'*160)
         for key in t.keys():
             print(f"{key:<{maxlen}}  |  {t[key]['forward']:8.2f} ms  |  {t[key]['backward']:8.2f} ms  |  {t[key]['forward-memory']:8.2f} GB  |  {t[key]['backward-memory']:8.2f} GB  |  {t[key]['params']:>11}  |  {t[key]['train_params']:>20}|  {t[key]['macs']:>20}", file=f)
             print(f"{key:<{maxlen}}  |  {t[key]['forward']:8.2f} ms  |  {t[key]['backward']:8.2f} ms  |  {t[key]['forward-memory']:8.2f} GB  |  {t[key]['backward-memory']:8.2f} GB  |  {t[key]['params']:>11}  |  {t[key]['train_params']:>20}|  {t[key]['macs']:>20}")
@@ -205,11 +212,13 @@ def main():
     
     res = {}
     
+    
     kan_models = {
-        'fourierkan': FourierKAN(layers=[args.inp_size, args.hid_size, 1], gridsize=5, device='cpu'),
+        'fourierkan': FourierKAN(layers=[args.inp_size, args.hid_size, 1], degree=5, device='cpu'),
         'chebykan': ChebyKAN(layers=[args.inp_size, args.hid_size, 1], device='cpu'),
         'mlp': MLP(layers=[args.inp_size, args.hid_size * 10, 1], device='cpu'),
-        'wav-kan': WavKAN(layers_hidden=[args.inp_size, 2 * args.hid_size + args.hid_size//2, 1], wavelet_type='dog')
+        # 'wav-kan': WavKAN(layers=[args.inp_size, args.hid_size, 1], wavelet_type='dog', device='cpu'),
+        'rbf-kan': RBFKAN(layers=[args.inp_size, args.hid_size, 1], device='cpu')
     }
 
     for model_name, model in kan_models.items():
