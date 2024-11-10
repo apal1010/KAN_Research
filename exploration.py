@@ -11,6 +11,7 @@ from experiment_kans.fourier_kan import FourierKAN
 from experiment_kans.cheby_kan import ChebyKAN
 from experiment_kans.wav_kan import WavKAN
 from experiment_kans.rbf_kan import RBFKAN
+from experiment_kans.spline_kan import SplineKAN
 from LayerTimer import LayerTimer
 import matplotlib.pyplot as plt
 
@@ -86,6 +87,7 @@ def profile_kan_model(
         num_iterations: Number of iterations for timing
     """
     kan_classes = {
+        'splinekan': SplineKAN,
         'fourierkan': FourierKAN,
         'chebykan': ChebyKAN,
         'wav-kan': WavKAN,
@@ -141,6 +143,7 @@ def vary_by_degree(KAN_type: str, device: str, depths: int, hidden_size: int, ba
         num_iterations: Number of iterations for timing
     """
     kan_classes = {
+        'splinekan': SplineKAN,
         'fourierkan': FourierKAN,
         'chebykan': ChebyKAN,
         'wav-kan': WavKAN,
@@ -207,6 +210,7 @@ def profile_kan_model_by_degree(
         components: List of components to profile
     """
     kan_classes = {
+        'splinekan': SplineKAN,
         'fourierkan': FourierKAN,
         'chebykan': ChebyKAN,
         'wav-kan': WavKAN,
@@ -302,6 +306,7 @@ def profile_kan_breakdown(
     os.makedirs("breakdown_results", exist_ok=True)
 
     kan_classes = {
+        'splinekan': SplineKAN,
         'fourierkan': FourierKAN,
         'chebykan': ChebyKAN,
         'wav-kan': WavKAN,
@@ -492,6 +497,7 @@ def main():
     loss_fn = lambda x, y: torch.mean((x - y) ** 2)
     
     breakdown_components = {
+        'splinekan':    ['aten::einsum', 'aten::copy_', 'aten::mul'],
         'fourierkan':   ['aten::einsum', 'aten::copy_', 'aten::mul', 'aten::cos', 'aten::sin'],
         'chebykan':     ['aten::einsum', 'aten::copy_', 'aten::acos', 'aten::cos', 'aten::tanh', 'aten::mul_'],
         'rbf-kan':      ['aten::einsum', 'aten::copy_', 'aten::exp', 'aten::sub', 'aten::pow', 'aten::div', 'aten::neg'],
@@ -506,7 +512,7 @@ def main():
     # sizes = [10, 20]
     degrees = [i for i in range (2, 21)]
     for device in ['cpu']:
-        for model_type in ['fourierkan', 'chebykan', 'rbf-kan', 'mlp']:
+        for model_type in ['splinekan', 'fourierkan', 'chebykan', 'rbf-kan', 'mlp']:
             # results varying size and depth
             res = profile_kan_model(KAN_type=model_type, device=device, layer_depths=depths, hidden_size=sizes, batch_size=32, num_warmup=5, num_iterations=20)
             plot_results_depth_size(res, depths, sizes, model_type, device)
