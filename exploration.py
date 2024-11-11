@@ -103,7 +103,7 @@ def profile_kan_model(
     for depth in layer_depths:
         for size in hidden_size:
             layers = [size] * (depth+1)
-            model = kan_classes[KAN_type](layers, degree = 2, device=device)
+            model = kan_classes[KAN_type](layers, degree = 5, device=device)
             model.to(device)
             
             print(f"\nProfiling {KAN_type} with depth {depth} and size {size}")
@@ -322,7 +322,7 @@ def profile_kan_breakdown(
     for depth in layer_depths:
         for size in hidden_size:
             layers = [size] * (depth + 1)
-            model = kan_classes[KAN_type](layers, degree=3, device=device)
+            model = kan_classes[KAN_type](layers, degree=5, device=device)
             model.to(device)
 
             print(f"\nProfiling {KAN_type} with depth {depth} and size {size}")
@@ -511,8 +511,8 @@ def main():
     # depths = [1,2,4]
     # sizes = [10, 20]
     degrees = [i for i in range (2, 21)]
-    for device in ['cpu']:
-        for model_type in ['splinekan', 'fourierkan', 'chebykan', 'rbf-kan', 'mlp']:
+    for device in ['cpu', 'cuda']:
+        for model_type in ['splinekan']:#['splinekan', 'fourierkan', 'chebykan', 'rbf-kan', 'mlp']:
             # results varying size and depth
             res = profile_kan_model(KAN_type=model_type, device=device, layer_depths=depths, hidden_size=sizes, batch_size=32, num_warmup=5, num_iterations=20)
             plot_results_depth_size(res, depths, sizes, model_type, device)

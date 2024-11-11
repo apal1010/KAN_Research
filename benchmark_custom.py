@@ -11,6 +11,7 @@ from experiment_kans.fourier_kan import FourierKAN
 from experiment_kans.cheby_kan import ChebyKAN
 from experiment_kans.wav_kan import WavKAN
 from experiment_kans.rbf_kan import RBFKAN
+from experiment_kans.spline_kan import SplineKAN
 
 from deepspeed.profiling.flops_profiler import get_model_profile
 from deepspeed.accelerator import get_accelerator
@@ -22,6 +23,7 @@ def explore(
         hidden_size: Tuple[int] = [1000],
     ):
     kan_classes = {
+        'splinekan': SplineKAN,
         'fourierkan': FourierKAN,
         'chebykan': ChebyKAN,
         'wav-kan': WavKAN,
@@ -214,6 +216,7 @@ def main():
     
     
     kan_models = {
+        'spline-kan': SplineKAN(layers=[args.inp_size, args.hid_size, 1], degree=5, device='cpu'),
         'fourierkan': FourierKAN(layers=[args.inp_size, args.hid_size, 1], degree=5, device='cpu'),
         'chebykan': ChebyKAN(layers=[args.inp_size, args.hid_size, 1], device='cpu'),
         'mlp': MLP(layers=[args.inp_size, args.hid_size * 10, 1], device='cpu'),

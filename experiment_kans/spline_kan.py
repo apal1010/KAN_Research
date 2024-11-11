@@ -19,7 +19,7 @@ def B_batch(x, grid, k=0, extend=True):
     
     x = x.unsqueeze(dim=2)
     grid = grid.unsqueeze(dim=0)
-    print(x.shape, grid.shape)
+    
     if k == 0:
         value = (x >= grid[:, :, :-1]) * (x < grid[:, :, 1:])
     else:
@@ -61,6 +61,7 @@ def curve2coef(x_eval, y_eval, grid, k, lamb=1e-8):
     mat = B_batch(x_eval, grid, k)
     mat = mat.permute(1,0,2)[:,None,:,:].expand(in_dim, out_dim, batch, n_coef)
     y_eval = y_eval.permute(1,2,0).unsqueeze(dim=3)
+    device = mat.device
     
     #coef = torch.linalg.lstsq(mat, y_eval,
                              #driver='gelsy' if device == 'cpu' else 'gels').solution[:,:,:,0]
@@ -68,7 +69,7 @@ def curve2coef(x_eval, y_eval, grid, k, lamb=1e-8):
     XtX = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0,1,3,2), mat)
     Xty = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0,1,3,2), y_eval)
     n1, n2, n = XtX.shape[0], XtX.shape[1], XtX.shape[2]
-    identity = torch.eye(n,n)[None, None, :, :].expand(n1, n2, n, n)
+    identity = torch.eye(n,n)[None, None, :, :].expand(n1, n2, n, n).to(device)
     A = XtX + lamb * identity
     B = Xty
     coef = (A.pinverse() @ B)[:,:,:,0]
@@ -95,7 +96,7 @@ class BasisTransformLayer(nn.Module):
         return b_splines
     
 class LinearCombinationLayer(nn.Module):
-    def __init__(self, input_dim, output_dim, grid, num, k, noise_scale=0.5):
+    def __init__(self, input_dim, output_dim, grid, num, k, noise_scale=0.5, device='cpu'):
         super(LinearCombinationLayer, self).__init__()
         self.inputdim = input_dim
         self.outdim = output_dim
@@ -114,10 +115,10 @@ class LinearCombinationLayer(nn.Module):
         return y
 
 class SplineKANLayer(nn.Module):
-    def __init__(self, in_dim=3, out_dim=2, num=5, degree=5):
+    def __init__(self, in_dim=3, out_dim=2, num=5, degree=5, device='cpu'):
         super(SplineKANLayer, self).__init__()
-        self.basis_transform = BasisTransformLayer(in_dim, out_dim, num = num, k=degree)
-        self.linear_combination = LinearCombinationLayer(in_dim, out_dim, self.basis_transform.grid, num=num, k=degree)
+        self.basis_transform = BasisTransformLayer(in_dim, out_dim, num = num, k=degree, device=device)
+        self.linear_combination = LinearCombinationLayer(in_dim, out_dim, self.basis_transform.grid, num=num, k=degree, device=device)
 
     def forward(self, x):
         basis_transformed = self.basis_transform(x)
@@ -128,7 +129,7 @@ class SplineKANLayer(nn.Module):
 class SplineKAN(nn.Module):
     def __init__(self, layers: Tuple[int], device: str = 'cpu', degree=5):
         super().__init__()
-        self.layers = nn.ModuleList([SplineKANLayer(layers[i], layers[i+1], degree=degree).to(device) for i in range(len(layers) - 1)])
+        self.layers = nn.ModuleList([SplineKANLayer(layers[i], layers[i+1], degree=degree, device=device) for i in range(len(layers) - 1)])
 
     def forward(self, x: torch.Tensor):
         for layer in self.layers:
