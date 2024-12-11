@@ -35,154 +35,7 @@ def parse_breakdown_data(layer_timer_data, components, metric):
     
     return breakdown_dict
         
-    
-def parse_layer_data(layer_timer_data):
-    total_linear_comb_time_forward = 0.0
-    total_basis_trans_time_forward = 0.0
-    total_linear_comb_time_backward = 0.0
-    total_basis_trans_time_backward = 0.0
-    
-    l_layers = 0
-    b_layers = 0
 
-    for layer_name, times in layer_timer_data.items():
-        if "linear_combination" in layer_name:
-            total_linear_comb_time_forward += times['forward_avg']
-            total_linear_comb_time_backward += times['backward_avg']
-            l_layers += 1
-        elif "basis_transform" in layer_name:
-            total_basis_trans_time_forward += times['forward_avg']
-            total_basis_trans_time_backward +=times['backward_avg']
-            b_layers += 1
-            
-            
-
-    return {
-        'lc_f' : total_linear_comb_time_forward,
-        'lc_b' : total_linear_comb_time_backward,
-        'bt_f' : total_basis_trans_time_forward,
-        'bt_b' : total_basis_trans_time_backward,
-        'ratio' : (total_basis_trans_time_forward) / ((total_basis_trans_time_forward) + (total_linear_comb_time_forward) + EPS)
-    }
-
-def profile_kan_model(
-    KAN_type: str,
-    device: str,
-    layer_depths: List[int] = [1],
-    hidden_size: List[int] = [1000],
-    batch_size: int = 32,
-    num_warmup: int = 10,
-    num_iterations: int = 100
-) -> Dict:
-    """
-    Profile KAN model performance with detailed timing for specific layers.
-    
-    Args:
-        KAN_type: Type of KAN model ('fourierkan', 'chebykan', 'wav-kan', 'rbf-kan', 'mlp')
-        device: Device to run on ('cuda' or 'cpu')
-        layer_depths: List of depths to test
-        hidden_size: List of hidden layer sizes to test
-        batch_size: Batch size for testing
-        num_warmup: Number of warmup iterations
-        num_iterations: Number of iterations for timing
-    """
-    kan_classes = {
-        'splinekan': SplineKAN,
-        'fourierkan': FourierKAN,
-        'chebykan': ChebyKAN,
-        'wav-kan': WavKAN,
-        'rbf-kan': RBFKAN,
-        'mlp': MLP
-    }
-    
-    if KAN_type not in kan_classes:
-        raise ValueError(f"Unknown KAN type: {KAN_type}")
-    
-    results = {}
-    
-    for depth in layer_depths:
-        for size in hidden_size:
-            layers = [size] * (depth+1)
-            model = kan_classes[KAN_type](layers, degree = 5, device=device)
-            model.to(device)
-            
-            print(f"\nProfiling {KAN_type} with depth {depth} and size {size}")
-            
-            input_data = torch.randn(batch_size, size).to(device)
-            target_data = torch.randn(batch_size, size).to(device)
-            
-            # Warmup
-            for _ in range(num_warmup):
-                model(input_data)
-            
-            # Timing
-            layer_timer = LayerTimer(model)
-            for _ in range(num_iterations):
-                output = model(input_data)
-                loss = torch.mean((output - target_data) ** 2)
-                loss.backward()
-            
-            layer_timer_data = layer_timer.get_average_times()
-            
-            results[f'depth_{depth}_size_{size}'] = parse_layer_data(layer_timer_data)
-
-            
-    return results
-
-def vary_by_degree(KAN_type: str, device: str, depths: int, hidden_size: int, batch_size: int, num_warmup: int, num_iterations: int, degrees: List[int]) -> Dict:
-    """
-    Profile KAN model performance with varying degree of basis transform.
-    
-    Args:
-        KAN_type: Type of KAN model ('fourierkan', 'chebykan', 'wav-kan', 'rbf-kan', 'mlp')
-        device: Device to run on ('cuda' or 'cpu')
-        layer_depth: Depth of the KAN model
-        hidden_size: Hidden layer size
-        batch_size: Batch size for testing
-        num_warmup: Number of warmup iterations
-        num_iterations: Number of iterations for timing
-    """
-    kan_classes = {
-        'splinekan': SplineKAN,
-        'fourierkan': FourierKAN,
-        'chebykan': ChebyKAN,
-        'wav-kan': WavKAN,
-        'rbf-kan': RBFKAN,
-        'mlp': MLP
-    }
-    
-    if KAN_type not in kan_classes:
-        raise ValueError(f"Unknown KAN type: {KAN_type}")
-    
-    results = {}
-    
-    for depth in depths:
-        for degree in degrees:
-            layers = [hidden_size] * (depth+1)
-            model = kan_classes[KAN_type](layers, degree = degree, device=device)
-            model.to(device)
-            
-            print(f"\nProfiling {KAN_type} with degree {degree} and depth {depth}")
-            
-            input_data = torch.randn(batch_size, hidden_size).to(device)
-            target_data = torch.randn(batch_size, hidden_size).to(device)
-            
-            # Warmup
-            for _ in range(num_warmup):
-                model(input_data)
-            
-            # Timing
-            layer_timer = LayerTimer(model)
-            for _ in range(num_iterations):
-                output = model(input_data)
-                loss = torch.mean((output - target_data) ** 2)
-                loss.backward()
-            
-            layer_timer_data = layer_timer.get_average_times()
-            
-            results[f'degree_{depth}_{degree}'] = parse_layer_data(layer_timer_data)
-        
-    return results
 
 def profile_kan_model_by_degree(
     KAN_type: str,
@@ -333,6 +186,8 @@ def profile_kan_breakdown(
             # Warmup
             for _ in range(num_warmup):
                 model(input_data)
+                
+            print(input_data.shape)
 
             # Profiling
             with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
@@ -497,10 +352,16 @@ def main():
     loss_fn = lambda x, y: torch.mean((x - y) ** 2)
     
     breakdown_components = {
-        'splinekan':    ['aten::bmm', 'aten::copy_', 'aten::mul', 'aten::sum'],
-        'fourierkan':   ['aten::bmm', 'aten::copy_', 'aten::mul', 'aten::cos', 'aten::sin'],
-        'chebykan':     ['aten::bmm', 'aten::copy_', 'aten::acos', 'aten::cos', 'aten::tanh', 'aten::mul_'],
-        'rbf-kan':      ['aten::bmm', 'aten::copy_', 'aten::exp', 'aten::sub', 'aten::pow', 'aten::div', 'aten::neg'],
+        # 'splinekan':    ['aten::bmm', 'aten::copy_', 'aten::mul', 'aten::sum', 'aten::slice', 'aten::sub', 'aten::nan_to_num', 'aten::as_strided'],
+        # 'fourierkan':   ['aten::bmm', 'aten::copy_', 'aten::mul', 'aten::cos', 'aten::sin'],
+        # 'chebykan':     ['aten::bmm', 'aten::copy_', 'aten::acos', 'aten::cos', 'aten::tanh', 'aten::mul_'],
+        # 'rbf-kan':      ['aten::bmm', 'aten::copy_', 'aten::exp', 'aten::sub', 'aten::pow', 'aten::div', 'aten::neg'],
+
+        'splinekan': ['aten::slice', 'aten::mul', 'aten::einsum', 'aten::sub', 'aten::nan_to_num', 'aten::to', 'aten::_to_copy', 'aten::as_strided', 'aten::bmm', 'aten::sum', 'aten::copy_', 'aten::unsqueeze', 'aten::div', 'aten::ge', 'aten::lt', 'aten::permute', 'aten::empty_like', 'aten::add', 'aten::select'][1:], 
+        'fourierkan': ['aten::einsum', 'aten::bmm', 'aten::reshape', 'aten::cos', 'aten::mul', 'aten::clone', 'aten::copy_', 'aten::arange', 'aten::to', 'aten::permute', 'aten::cat', 'aten::_to_copy', 'aten::view', 'aten::unsqueeze', 'aten::empty_like', 'aten::sin', 'aten::empty', 'aten::as_strided', 'aten::_unsafe_view' ][1:], 
+        'chebykan': ['aten::einsum', 'aten::acos', 'aten::reshape', 'aten::clone', 'aten::mul_', 'aten::bmm', 'aten::permute', 'aten::copy_', 'aten::tanh', 'aten::to', 'aten::unsqueeze', 'aten::cos', 'aten::_to_copy', 'aten::empty_like', 'aten::view', 'aten::as_strided', 'aten::expand', 'aten::empty', 'aten::_unsafe_view'][1:], 
+        'rbf-kan': ['aten::einsum', 'aten::reshape', 'aten::clone', 'aten::sub', 'aten::div', 'aten::permute', 'aten::unsqueeze', 'aten::bmm', 'aten::copy_', 'aten::to', 'aten::_to_copy', 'aten::empty_like', 'aten::exp', 'aten::as_strided', 'aten::pow', 'aten::view', 'aten::empty', 'aten::_unsafe_view', 'aten::neg'][1:]
+
     }
     
     # device = 'cuda'
@@ -508,26 +369,19 @@ def main():
     # depths = [2, 4, 8, 12]
     # sizes = [10, 20, 40, 80, 160, 200, 400, 500, 800]#, 1600, 2000, 2400]
     sizes = [i * 50 for i in range(1, 9)]
-    depths = [1,2,4,5]
-    # sizes = [10, 20]
-    degrees = [i for i in range (2, 13)]
-    for device in ['cpu', 'cuda']:
-        for model_type in ['splinekan']:#['fourierkan', 'chebykan', 'rbf-kan', 'mlp', 'splinekan']:
+    depths = [1,2]
+    # sizes = [10, 20, 40, 80, 100, 200]
+    degrees = [i for i in range (2, 5)]
+    for device in ['cpu']:
+        for model_type in ['fourierkan', 'chebykan', 'rbf-kan', 'splinekan']:
             # results varying size and depth
-            res = profile_kan_model(KAN_type=model_type, device=device, layer_depths=depths, hidden_size=sizes, batch_size=32, num_warmup=5, num_iterations=20)
-            plot_results_depth_size(res, depths, sizes, model_type, device)
-            # #results varying degree
-            if model_type == 'mlp':
-                continue
-            res = vary_by_degree(KAN_type=model_type, device=device, depths=depths, hidden_size=10, batch_size=32, num_warmup=10, num_iterations=20, degrees=degrees)
-            plot_results_degree(res, degrees, model_type, depths, device)
             # results for profiling breakdown
             breakdown_res = profile_kan_breakdown(KAN_type=model_type, device=device, layer_depths=depths, hidden_size=sizes, batch_size=16, num_warmup=3, num_iterations=10, components=breakdown_components[model_type])
             plot_breakdown_results(breakdown_res, breakdown_components[model_type], model_type, depths, device)
             
             # Degree varying breakdown
-            breakdown_res_by_degree = profile_kan_model_by_degree( KAN_type=model_type, device=device, depths=depths, hidden_size=50, batch_size=32, num_warmup=3, num_iterations=10, degrees=degrees, components=breakdown_components[model_type])
-            plot_breakdown_degree(breakdown_res_by_degree, degrees, depths, model_type, device, breakdown_components[model_type])
+            # breakdown_res_by_degree = profile_kan_model_by_degree( KAN_type=model_type, device=device, depths=depths, hidden_size=50, batch_size=32, num_warmup=3, num_iterations=10, degrees=degrees, components=breakdown_components[model_type])
+            # plot_breakdown_degree(breakdown_res_by_degree, degrees, depths, model_type, device, breakdown_components[model_type])
     
 
 if __name__=='__main__':
